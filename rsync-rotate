@@ -1,0 +1,195 @@
+#!/bin/sh
+#
+# Author     : Terminator
+# License    : GPL
+# ChangeLog  : 12/13/2020 Init release
+#
+# Description: This script rotates the existing snapshots to prepare
+#              the new snapshot. This script must reside on the storage
+#              server that hosts the backup snapshots.
+#
+# Note       : By default we will keep snapshots of the last 7 days, 4
+#              weeks, and 6 months.
+#
+# Execution  : To invoke this script, the client (e.g., a laptop) should
+#              run a command as the following:
+#
+#              rsync -e ssh --rsync-path=/path/to/rsync-rotate \
+#                /src/ user@server:/dst/
+#
+#              Where /src/ is the source directory on the client to be
+#              backed up, and /dst/ is the destination directory on
+#              the server to store snapshots (defined as BAK_ROOT below).
+#
+#              Hence, the snapshots are following on the storage server:
+#              /dst/snapshot.day1
+#              /dst/snapshot.day2
+#              ...
+#              /dst/snapshot.mon6
+#
+
+# Where the backup snapshots will be stored, modify it as you wish.
+BAK_ROOT="/mnt/backup_volume/user/backup"
+# Name of backup, by default they are snapshot.day1, snapshot.day2,
+# ... snapshot.week1, ... snapshot.month1, ...
+BAK_NAME="snapshot"
+# Name of the user running rsync-rotate script
+WHOAMI=`whoami`
+
+# These are the regular snapshots for 6 months, month 6 is the oldest
+MAX_MONTH=6
+# These are the regular snapshots for 4 weeks, week 4 is the oldest
+MAX_WEEK=4
+# These are the regular snapshots for a week, day 7 is the oldest
+MAX_DAY=7
+
+##################################################################
+# YOU SHOULD NOT CHANGE ANYTHING BELOW UNLESS YOU ARE ABSOLUTELY #
+# SURE ABOUT WHAT YOU ARE GOING TO DO.                           #
+##################################################################
+
+# Setup our path first, so we do not need to specify full path of
+# the commands below.
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+export PATH
+
+if [ ${MAX_MONTH} -lt 2 ]; then
+    logger "The number of monthly backup ${MAX_MONTH} is smaller than 2"
+    exit 1
+fi
+if [ ${MAX_WEEK} -lt 2 ]; then
+    logger "The number of weekly backup ${MAX_MONTH} is smaller than 2"
+    exit 1
+fi
+if [ ${MAX_DAY} -lt 2 ]; then
+    logger "The number of daily backup ${MAX_DAY} is smaller than 2"
+    exit 1
+fi
+
+LAST_MONTH="${BAK_ROOT}/${BAK_NAME}.month${MAX_MONTH}"
+FIRST_MONTH="${BAK_ROOT}/${BAK_NAME}.month1"
+LAST_WEEK="${BAK_ROOT}/${BAK_NAME}.week${MAX_WEEK}"
+FIRST_WEEK="${BAK_ROOT}/${BAK_NAME}.week1"
+LAST_DAY="${BAK_ROOT}/${BAK_NAME}.day${MAX_DAY}"
+FIRST_DAY="${BAK_ROOT}/${BAK_NAME}.day1"
+
+# This is the destination directory that record the last snapshot
+BAK_DEST="${FIRST_DAY}"
+
+rotate_monthly_backup()
+{
+    logger "${WHOAMI}: Rotate monthly backups!"
+
+    if [ -d ${LAST_MONTH} ]; then
+        logger "${WHOAMI}: delete the oldest monthly backup!"
+        rm -rf ${LAST_MONTH}
+    fi
+
+    for curr in `seq ${MAX_MONTH} -1 2`; do
+        prev=$((curr - 1))
+        DST="${BAK_ROOT}/${BAK_NAME}.month${curr}"
+        SRC="${BAK_ROOT}/${BAK_NAME}.month${prev}"
+        if [ -d ${SRC} ]; then
+            logger "mv ${SRC} to ${DST}"
+            mv ${SRC} ${DST}
+            LATEST_BACKUP="${DST}"
+        fi
+    done
+
+    if [ -d ${LAST_WEEK} ]; then
+        logger "mv ${LAST_WEEK} to ${FIRST_MONTH}"
+        mv ${LAST_WEEK} ${FIRST_MONTH}
+        LATEST_BACKUP="${FIRST_MONTH}"
+    fi
+}
+
+rotate_weekly_backup()
+{
+    logger "${WHOAMI}: Rotate weekly backups!"
+
+    if [ -d ${LAST_WEEK} ]; then
+        logger "${WHOAMI}: delete the oldest weekly backup!"
+        rm -rf ${LAST_WEEK}
+    fi
+
+    for curr in `seq ${MAX_WEEK} -1 2`; do
+        prev=$((curr - 1))
+        DST="${BAK_ROOT}/${BAK_NAME}.week${curr}"
+        SRC="${BAK_ROOT}/${BAK_NAME}.week${prev}"
+        if [ -d ${SRC} ]; then
+            logger "mv ${SRC} to ${DST}"
+            mv ${SRC} ${DST}
+            LATEST_BACKUP="${DST}"
+        fi
+    done
+
+    if [ -d ${LAST_DAY} ]; then
+        logger "mv ${LAST_DAY} to ${FIRST_WEEK}"
+        mv ${LAST_DAY} ${FIRST_WEEK}
+        LATEST_BACKUP="${FIRST_WEEK}"
+    fi
+}
+
+rotate_daily_backup()
+{
+    logger "${WHOAMI}: Rotate daily backups!"
+
+    if [ -d ${LAST_DAY} ]; then
+        logger "${WHOAMI}: delete the oldest daily backup!"
+        rm -rf ${LAST_DAY}
+    fi
+
+    for curr in `seq ${MAX_DAY} -1 2`; do
+        prev=$((curr - 1))
+        DST="${BAK_ROOT}/${BAK_NAME}.day${curr}"
+        SRC="${BAK_ROOT}/${BAK_NAME}.day${prev}"
+        if [ -d ${SRC} ]; then
+            logger "mv ${SRC} to ${DST}"
+            mv ${SRC} ${DST}
+            LATEST_BACKUP="${DST}"
+        fi
+    done
+}
+
+rotate_backup()
+{
+    # Today is first day of month, rotate snapshots of all previous months
+    DAY_OF_MONTH=`date +%d`
+    if [ "${DAY_OF_MONTH}" = "01" ]; then
+        rotate_monthly_backup
+    fi
+
+    # Today is Monday, rotate snapshots of all previous weeks
+    DAY_OF_WEEK=`date +%A`
+    if [ "${DAY_OF_WEEK}" = "Monday" ]; then
+        rotate_weekly_backup
+    fi
+
+    rotate_daily_backup
+}
+
+logger "${WHOAMI}: prepare to backup!"
+LATEST_BACKUP="${FIRST_DAY}"
+if [ ! -d "${LATEST_BACKUP}" ]; then
+    logger "There is no first backup! Creating ${LATEST_BACKUP} now..."
+    mkdir -p "${LATEST_BACKUP}"
+fi
+
+# Check last access time of the first day snapshot. If it is already today,
+# do not rotate backups. Last modify time is not accurate.
+CURRENT_DATE=`date +%Y-%m-%d`
+LATEST_BACKUP_DATE=`stat -c "%x" "${LATEST_BACKUP}" | awk '{print $1}'`
+if [ "${LATEST_BACKUP_DATE}" = "${CURRENT_DATE}" ]; then
+    logger "Latest backup appears to be today. Skip rotation..."
+else
+    rotate_backup
+fi
+
+if [ "${LATEST_BACKUP}" != "${BAK_DEST}" ]; then
+    logger "${WHOAMI}: duplicate ${LATEST_BACKUP} to ${BAK_DEST}..."
+    # The magic happens with cp -al command
+    cp -al ${LATEST_BACKUP} ${BAK_DEST}
+fi
+
+# Call rsync as usual
+rsync "$@"

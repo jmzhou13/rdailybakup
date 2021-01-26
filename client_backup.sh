@@ -21,8 +21,8 @@ SERVER_SCRIPT="/home/user/bin/rsync-rotate"
 
 SRC_DIR="/home/user/"
 if [ ! -d ${SRC_DIR} ]; then
-	echo "ERROR: Cannot find directory ${SRC_DIR}!"
-	exit 1
+    echo "ERROR: Cannot find directory ${SRC_DIR}!"
+    exit 1
 fi
 LOG_FILE="/tmp/rsnapshot.log"
 
@@ -49,13 +49,13 @@ touch ${SRC_DIR}/.today-is-${TOUCH_DATE}
 
 
 usage() {
-	echo "This program will backup the data of laptop home directory"
-	echo "to a backup server."
+    echo "This program will backup the data of laptop home directory"
+    echo "to a backup server."
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "Please make sure to grant full disk access to /usr/bin/rsync"
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-	echo "Usage: ${SELF} server|dyndns|list"
-	exit 1
+    echo "Usage: ${SELF} server|dyndns|list"
+    exit 1
 }
 
 if [ "$1" = "" ]; then
@@ -71,27 +71,27 @@ paranoid=
 opthome="--verbose --archive --partial --progress --recursive --links --times --perms --update --delete --delete-excluded --delete-after --exclude-from=${EXCLUDE_FILE} -e ssh --rsync-path=${SERVER_SCRIPT}"
 
 if [ "$1" = "server" ]; then
-	echo "Backup home directory to backup server..."
-	logger "Backup home directory to backup server..."
-	${rsyncmd} ${paranoid} ${opthome} ${SRC_DIR} \
-		user@${LOCAL_SERVER}:${BAK_DIR} 2>&1 | tee ${LOG_FILE}
+    echo "Backup home directory to backup server..."
+    logger "Backup home directory to backup server..."
+    ${rsyncmd} ${paranoid} ${opthome} ${SRC_DIR} \
+        user@${LOCAL_SERVER}:${BAK_DIR} 2>&1 | tee ${LOG_FILE}
     scp ${LOG_FILE} user@${LOCAL_SERVER}:${BAK_DIR}/
 
     echo "Completed at ${BAK_DIR} on server." | \
     mailx -s "Backing up ${HOSTNAME} at ${TOUCH_DATE}!" ${NOTIFY_EMAIL}
-	exit 0
+    exit 0
 elif [ "$1" = "dyndns" ]; then
-	echo "Backup home directory to backup server server.dybndns.com..."
-	logger "Backup home directory to backup server server.dybndns.com..."
-	${rsyncmd} ${paranoid} ${opthome} ${SRC_DIR} \
-		user@${DYNDNS_SERVER}:${BAK_DIR} 2>&1 | tee ${LOG_FILE}
+    echo "Backup home directory to backup server server.dybndns.com..."
+    logger "Backup home directory to backup server server.dybndns.com..."
+    ${rsyncmd} ${paranoid} ${opthome} ${SRC_DIR} \
+        user@${DYNDNS_SERVER}:${BAK_DIR} 2>&1 | tee ${LOG_FILE}
     scp ${LOG_FILE} user@${DYNDNS_SERVER}:${BAK_DIR}/
 
     echo "Completed at ${BAK_DIR} on server." | \
     mailx -s "Backing up ${HOSTNAME} at ${TOUCH_DATE}!" ${NOTIFY_EMAIL}
-	exit 0
+    exit 0
 elif [ "$1" = "list" ]; then
-	echo "List of backups on backup server..."
+    echo "List of backups on backup server..."
     ssh user@${LOCAL_SERVER} ls -lt ${BAK_ROOT}
     exit 0
 fi

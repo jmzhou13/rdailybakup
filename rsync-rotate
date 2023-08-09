@@ -3,6 +3,7 @@
 # Author     : Terminator
 # License    : GPL
 # ChangeLog  : 12/13/2020 Init release
+#              08/08/2023 Add in progress signal, check rotation dest
 #
 # Description: This script rotates the existing snapshots to prepare
 #              the new snapshot. This script must reside on the storage
@@ -35,6 +36,8 @@ BAK_ROOT="/mnt/backup_volume/user/backup"
 BAK_NAME="snapshot"
 # Name of the user running rsync-rotate script
 WHOAMI=`whoami`
+# Status file
+INPROGRESS="${BAK_ROOT}/backup_in_progress"
 
 # These are the regular snapshots for 6 months, month 6 is the oldest
 MAX_MONTH=6
@@ -53,6 +56,19 @@ MAX_DAY=7
 PATH=/bin:/usr/bin:/sbin:/usr/sbin
 export PATH
 
+CURRENT_DATE=`date +%Y-%m-%d`
+
+# Check existing in progress signal
+if [ -f "${INPROGRESS}" ]; then
+    INPROGRESS_DATE=`stat -c "%y" "${INPROGRESS}" | awk '{print $1}'`
+    if [ "${CURRENT_DATE}" = "${INPROGRESS_DATE}" ]; then
+        logger "An existing backup is in progress. Exiting now."
+        exit 1
+    else
+        logger "Removing old in progress signal and proceed to backup."
+        rm -f "${INPROGRESS}"
+    fi
+fi
 if [ ${MAX_MONTH} -lt 2 ]; then
     logger "The number of monthly backup ${MAX_MONTH} is smaller than 2"
     exit 1
@@ -90,16 +106,24 @@ rotate_monthly_backup()
         DST="${BAK_ROOT}/${BAK_NAME}.month${curr}"
         SRC="${BAK_ROOT}/${BAK_NAME}.month${prev}"
         if [ -d ${SRC} ]; then
-            logger "mv ${SRC} to ${DST}"
-            mv ${SRC} ${DST}
-            LATEST_BACKUP="${DST}"
+            if [ ! -d ${DST} ]; then
+                logger "mv ${SRC} to ${DST}"
+                mv ${SRC} ${DST}
+                LATEST_BACKUP="${DST}"
+            else
+                LATEST_BACKUP="${SRC}"
+            fi
         fi
     done
 
     if [ -d ${LAST_WEEK} ]; then
-        logger "mv ${LAST_WEEK} to ${FIRST_MONTH}"
-        mv ${LAST_WEEK} ${FIRST_MONTH}
-        LATEST_BACKUP="${FIRST_MONTH}"
+        if [ ! -d ${FIRST_MONTH} ]; then
+            logger "mv ${LAST_WEEK} to ${FIRST_MONTH}"
+            mv ${LAST_WEEK} ${FIRST_MONTH}
+            LATEST_BACKUP="${FIRST_MONTH}"
+        else
+            LATEST_BACKUP="${LAST_WEEK}"
+        fi
     fi
 }
 
@@ -117,16 +141,24 @@ rotate_weekly_backup()
         DST="${BAK_ROOT}/${BAK_NAME}.week${curr}"
         SRC="${BAK_ROOT}/${BAK_NAME}.week${prev}"
         if [ -d ${SRC} ]; then
-            logger "mv ${SRC} to ${DST}"
-            mv ${SRC} ${DST}
-            LATEST_BACKUP="${DST}"
+            if [ ! -d ${DST} ]; then
+                logger "mv ${SRC} to ${DST}"
+                mv ${SRC} ${DST}
+                LATEST_BACKUP="${DST}"
+            else
+                LATEST_BACKUP="${SRC}"
+            fi
         fi
     done
 
     if [ -d ${LAST_DAY} ]; then
-        logger "mv ${LAST_DAY} to ${FIRST_WEEK}"
-        mv ${LAST_DAY} ${FIRST_WEEK}
-        LATEST_BACKUP="${FIRST_WEEK}"
+        if [ ! -d ${FIRST_WEEK} ]; then
+            logger "mv ${LAST_DAY} to ${FIRST_WEEK}"
+            mv ${LAST_DAY} ${FIRST_WEEK}
+            LATEST_BACKUP="${FIRST_WEEK}"
+        else
+            LATEST_BACKUP="${LAST_DAY}"
+        fi
     fi
 }
 
@@ -144,8 +176,10 @@ rotate_daily_backup()
         DST="${BAK_ROOT}/${BAK_NAME}.day${curr}"
         SRC="${BAK_ROOT}/${BAK_NAME}.day${prev}"
         if [ -d ${SRC} ]; then
-            logger "mv ${SRC} to ${DST}"
-            mv ${SRC} ${DST}
+            if [ ! -d ${DST} ]; then
+                logger "mv ${SRC} to ${DST}"
+                mv ${SRC} ${DST}
+            fi
             LATEST_BACKUP="${DST}"
         fi
     done
@@ -177,19 +211,30 @@ fi
 
 # Check last access time of the first day snapshot. If it is already today,
 # do not rotate backups. Last modify time is not accurate.
-CURRENT_DATE=`date +%Y-%m-%d`
-LATEST_BACKUP_DATE=`stat -c "%x" "${LATEST_BACKUP}" | awk '{print $1}'`
+LATEST_BACKUP_DATE=`stat -c "%y" "${LATEST_BACKUP}" | awk '{print $1}'`
 if [ "${LATEST_BACKUP_DATE}" = "${CURRENT_DATE}" ]; then
     logger "Latest backup appears to be today. Skip rotation..."
 else
+    # This will find an old backup other than the first day backup
+    # and update LATEST_BACKUP variable. It will also vacate the
+    # first day backup so that magic can happen below.
     rotate_backup
 fi
 
+# Create in progress signal to avoid concurrent backup on the same day
+echo "${CURRENT_DATE}" > "${INPROGRESS}"
+
+# The magic
 if [ "${LATEST_BACKUP}" != "${BAK_DEST}" ]; then
-    logger "${WHOAMI}: duplicate ${LATEST_BACKUP} to ${BAK_DEST}..."
-    # The magic happens with cp -al command
-    cp -al ${LATEST_BACKUP} ${BAK_DEST}
+    if [ ! -d "${BAK_DEST}" ]; then
+        logger "${WHOAMI}: duplicate ${LATEST_BACKUP} to ${BAK_DEST}..."
+        # The magic happens with cp -al command
+        cp -al ${LATEST_BACKUP} ${BAK_DEST}
+    fi
 fi
 
 # Call rsync as usual
 rsync "$@"
+
+# Delete in progress signal
+rm -f "${INPROGRESS}"

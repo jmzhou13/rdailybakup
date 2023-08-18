@@ -4,6 +4,7 @@
 # License    : GPL
 # ChangeLog  : 12/13/2020 Init release
 #              08/08/2023 Add in progress signal, check rotation dest
+#              08/18/2023 Fix deleting read-only backup directory
 #
 # Description: This script rotates the existing snapshots to prepare
 #              the new snapshot. This script must reside on the storage
@@ -92,13 +93,29 @@ FIRST_DAY="${BAK_ROOT}/${BAK_NAME}.day1"
 # This is the destination directory that record the last snapshot
 BAK_DEST="${FIRST_DAY}"
 
+# forcefully remove a directory
+remove_dir()
+{
+    DIR_TO_REMOVE="${1}"
+    # first attempt to remove the directory
+    if [ -d "${DIR_TO_REMOVE}" ]; then
+        rm -rf "${DIR_TO_REMOVE}"
+    fi
+    # second attempt to remove the directory
+    if [ -d "${DIR_TO_REMOVE}" ]; then
+        logger "Directory ${DIR_TO_REMOVE} has some read-only sub-dirs/files..."
+        chmod -R u+w "${DIR_TO_REMOVE}"
+        rm -rf "${DIR_TO_REMOVE}"
+    fi
+}
+
 rotate_monthly_backup()
 {
     logger "${WHOAMI}: Rotate monthly backups!"
 
     if [ -d ${LAST_MONTH} ]; then
-        logger "${WHOAMI}: delete the oldest monthly backup!"
-        rm -rf ${LAST_MONTH}
+        logger "${WHOAMI}: delete the oldest monthly backup ${LAST_MONTH}!"
+        remove_dir "${LAST_MONTH}"
     fi
 
     for curr in `seq ${MAX_MONTH} -1 2`; do
@@ -132,8 +149,8 @@ rotate_weekly_backup()
     logger "${WHOAMI}: Rotate weekly backups!"
 
     if [ -d ${LAST_WEEK} ]; then
-        logger "${WHOAMI}: delete the oldest weekly backup!"
-        rm -rf ${LAST_WEEK}
+        logger "${WHOAMI}: delete the oldest weekly backup ${LAST_WEEK}!"
+        remove_dir "${LAST_WEEK}"
     fi
 
     for curr in `seq ${MAX_WEEK} -1 2`; do
@@ -167,8 +184,8 @@ rotate_daily_backup()
     logger "${WHOAMI}: Rotate daily backups!"
 
     if [ -d ${LAST_DAY} ]; then
-        logger "${WHOAMI}: delete the oldest daily backup!"
-        rm -rf ${LAST_DAY}
+        logger "${WHOAMI}: delete the oldest daily backup ${LAST_DAY}!"
+        remove_dir "${LAST_DAY}"
     fi
 
     for curr in `seq ${MAX_DAY} -1 2`; do
@@ -230,11 +247,14 @@ if [ "${LATEST_BACKUP}" != "${BAK_DEST}" ]; then
         logger "${WHOAMI}: duplicate ${LATEST_BACKUP} to ${BAK_DEST}..."
         # The magic happens with cp -al command
         cp -al ${LATEST_BACKUP} ${BAK_DEST}
+        logger "${WHOAMI}: duplicate completed successfully..."
     fi
 fi
 
 # Call rsync as usual
+logger "Rsync backup starting now..."
 rsync "$@"
 
+logger "Rsync backup completed successfully!"
 # Delete in progress signal
 rm -f "${INPROGRESS}"
